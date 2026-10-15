@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 16px);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* Prevent double-tap zoom delay on interactive touch elements */
+button, a, input, select, textarea {
+  touch-action: manipulation;
+}
+
+/* Smooth mobile tap highlight */
+* {
+  -webkit-tap-highlight-color: transparent;
+}

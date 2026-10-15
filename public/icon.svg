@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="romeoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7C3AED" />
+      <stop offset="100%" stop-color="#F43F5E" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#7C3AED" flood-opacity="0.35" />
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#romeoGrad)" />
+  <g filter="url(#shadow)">
+    <!-- Chimney -->
+    <rect x="310" y="140" width="45" height="90" rx="8" fill="#FFFFFF" />
+    <!-- Roof Triangle -->
+    <path d="M256 120 L395 240 C403 247 398 260 387 260 H125 C114 260 109 247 117 240 Z" fill="#FFFFFF" />
+    <!-- House Base -->
+    <rect x="146" y="255" width="220" height="150" rx="16" fill="#FFFFFF" />
+    <!-- Door Archway -->
+    <path d="M226 405 V315 C226 298 240 285 256 285 C272 285 286 298 286 315 V405 Z" fill="url(#romeoGrad)" />
+    <!-- Heart Accent Symbol above door -->
+    <circle cx="256" cy="225" r="14" fill="#F43F5E" />
+  </g>
+</svg>

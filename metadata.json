@@ -1,0 +1,6 @@
+{
+  "name": "Romeo - Modern Accommodation & Roommate Matching",
+  "description": "AI-powered accommodation and compatible roommate finder for students and young working professionals. Find verified PGs, flats, shared spaces, and roommates.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
