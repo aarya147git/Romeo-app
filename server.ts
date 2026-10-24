@@ -6,11 +6,16 @@ import { PropertyListing, UserProfile, ConnectionRequest, ChatMessage, ReportIte
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { dbConnect } from './lib/dbConnect';
+import { calculateCompatibility } from './lib/matching';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 dotenv.config();
+
+// Attempt MongoDB connection
+dbConnect().catch(err => console.warn('Database fallback active:', err.message));
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;

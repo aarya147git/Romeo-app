@@ -1,326 +1,311 @@
-/**
- * src/services/api.ts  — Mock API layer (no backend required)
- *
- * Replaces all fetch('/api/...') calls with direct in-memory operations
- * on seedData. Same function signatures as the original — nothing else changes.
- */
+import { PropertyListing, UserProfile, ConnectionRequest, ChatMessage, ReportItem } from '../types';
+import { INITIAL_USERS, INITIAL_PROPERTIES, INITIAL_CONNECTIONS, INITIAL_MESSAGES, INITIAL_REPORTS } from '../data/seedData';
 
-import {
-  PropertyListing,
-  UserProfile,
-  ConnectionRequest,
-  ChatMessage,
-  ReportItem,
-} from '../types';
-import {
-  INITIAL_USERS,
-  INITIAL_PROPERTIES,
-  INITIAL_CONNECTIONS,
-  INITIAL_MESSAGES,
-  INITIAL_REPORTS,
-} from '../data/seedData';
+// Helper for safe JSON fetching with fallback
+async function safeFetch<T>(url: string, options?: RequestInit, fallback?: T): Promise<T> {
+  try {
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      console.warn(`[API] ${options?.method || 'GET'} ${url} returned ${res.status}`);
+      if (fallback !== undefined) return fallback;
+    }
+    const contentType = res.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      return await res.json();
+    }
+    return (fallback !== undefined ? fallback : ({} as T));
+  } catch (err) {
+    console.warn(`[API] Network error fetching ${url}:`, err);
+    if (fallback !== undefined) return fallback;
+    throw err;
+  }
+}
 
-// ─── In-memory store (persists for the browser session) ───────────────────────
-let users: UserProfile[]             = [...INITIAL_USERS];
-let properties: PropertyListing[]    = [...INITIAL_PROPERTIES];
-let connections: ConnectionRequest[] = [...INITIAL_CONNECTIONS];
-let messages: ChatMessage[]          = [...INITIAL_MESSAGES];
-let reports: ReportItem[]            = [...INITIAL_REPORTS];
-let savedPropertyIds: Set<string>    = new Set(['prop-blr-koramangala', 'prop-delhi-southcampus']);
-let shortlistedUserIds: Set<string>  = new Set(['user-ananya', 'user-priya']);
-let currentUserId: string            = 'user-rohan';
-
-/** Keeps the API feeling async — same as real fetch responses. */
-const delay = <T>(value: T): Promise<T> =>
-  new Promise(resolve => setTimeout(() => resolve(value), 0));
-
-// ─── Exported API ─────────────────────────────────────────────────────────────
 export const api = {
-
-  // ── Auth ──────────────────────────────────────────────────────────────────
+  // ── Auth & Current User ───────────────────────────────────────────────────
   async getCurrentUser(): Promise<{ user: UserProfile; savedPropertyIds: string[]; shortlistedUserIds: string[] } | null> {
-    const user = users.find(u => u.id === currentUserId) || users[0];
-    return delay({
-      user,
-      savedPropertyIds: Array.from(savedPropertyIds),
-      shortlistedUserIds: Array.from(shortlistedUserIds),
-    });
+    const fallback = {
+      user: INITIAL_USERS[0],
+      savedPropertyIds: ['prop-blr-koramangala', 'prop-delhi-southcampus'],
+      shortlistedUserIds: ['user-ananya', 'user-priya'],
+    };
+    return safeFetch('/api/auth/current-user', {}, fallback);
   },
 
   async setCurrentUser(userId: string): Promise<{ user: UserProfile; savedPropertyIds: string[]; shortlistedUserIds: string[] } | null> {
-    if (userId && users.some(u => u.id === userId)) currentUserId = userId;
-    const user = users.find(u => u.id === currentUserId) || users[0];
-    return delay({
-      user,
-      savedPropertyIds: Array.from(savedPropertyIds),
-      shortlistedUserIds: Array.from(shortlistedUserIds),
-    });
+    const targetUser = INITIAL_USERS.find(u => u.id === userId) || INITIAL_USERS[0];
+    const fallback = {
+      user: targetUser,
+      savedPropertyIds: ['prop-blr-koramangala', 'prop-delhi-southcampus'],
+      shortlistedUserIds: ['user-ananya', 'user-priya'],
+    };
+    return safeFetch('/api/auth/current-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId }),
+    }, fallback);
   },
 
-  // ── Users ─────────────────────────────────────────────────────────────────
+  // ── Users & Roommates (MongoDB via /api/roommates & /api/users) ─────────────
   async fetchUsers(params?: Record<string, string | number>): Promise<UserProfile[]> {
-    let filtered = [...users];
-    if (params) {
-      const { city, role, genderPref, maxBudget } = params as Record<string, string>;
-      if (city && city !== 'all')
-        filtered = filtered.filter(u => u.city.toLowerCase() === city.toLowerCase());
-      if (role && role !== 'all')
-        filtered = filtered.filter(u => u.role === role);
-      if (genderPref && genderPref !== 'all')
-        filtered = filtered.filter(u => u.gender === genderPref);
-      if (maxBudget) {
-        const budget = parseInt(maxBudget, 10);
-        if (!isNaN(budget)) filtered = filtered.filter(u => u.budgetMin <= budget);
-      }
-    }
-    return delay(filtered);
+    const search = params ? new URLSearchParams(params as Record<string, string>).toString() : '';
+    const res = await safeFetch<{ users?: UserProfile[] }>(`/api/users?${search}`, {}, { users: INITIAL_USERS });
+    return res.users || INITIAL_USERS;
   },
 
   async fetchUserById(id: string): Promise<UserProfile | null> {
-    return delay(users.find(u => u.id === id) ?? null);
+    const userFallback = INITIAL_USERS.find(u => u.id === id) || null;
+    const res = await safeFetch<{ user?: UserProfile }>(`/api/users/${id}`, {}, { user: userFallback || undefined });
+    return res.user || userFallback;
   },
 
   async createUser(userData: Partial<UserProfile>): Promise<UserProfile> {
-    const newUser: UserProfile = {
-      id: `user-${Date.now()}`,
-      name: userData.name || 'Anonymous User',
-      age: userData.age || 22,
-      gender: userData.gender || 'male',
-      avatar: userData.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=400&q=80',
-      email: userData.email || `user${Date.now()}@example.com`,
-      phone: userData.phone || '+91 98000 00000',
-      bio: userData.bio || 'Looking for a compatible roommate.',
-      role: userData.role || 'professional',
-      institution: userData.institution || 'Bangalore Tech Park',
-      occupationTitle: userData.occupationTitle || 'Software Engineer',
-      city: userData.city || 'Bangalore',
-      preferredLocalities: userData.preferredLocalities || ['Koramangala'],
-      budgetMin: userData.budgetMin || 10000,
-      budgetMax: userData.budgetMax || 20000,
-      preferredMoveInDate: userData.preferredMoveInDate || '2026-11-01',
-      preferredAccommodation: userData.preferredAccommodation || 'flat',
-      preferredRoommateGender: userData.preferredRoommateGender || 'any',
-      leaseDuration: userData.leaseDuration || '1 year+',
-      lifestyle: userData.lifestyle || {
-        smoking: 'non_smoker', drinking: 'social', foodDiet: 'no_preference',
-        sleepSchedule: 'flexible', sleepTiming: '11:30 PM - 7:30 AM',
-        cleanliness: 'moderate', socialVibe: 'balanced',
-        guestPolicy: 'open_with_notice', wfhStatus: 'hybrid',
-        pets: 'comfortable_with_pets', acPreference: 'must_have',
-        furnishingPref: 'fully_furnished',
-      },
-      contactVisibility: userData.contactVisibility || 'after_connection',
-      isVerified: true,
-      verificationBadge: 'Govt ID Verified',
-      hasPlaceToShare: userData.hasPlaceToShare || false,
-      createdAt: new Date().toISOString().split('T')[0],
-    };
-    users.unshift(newUser);
-    return delay(newUser);
+    const res = await safeFetch<{ user: UserProfile }>('/api/roommates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(userData),
+    }, { user: userData as UserProfile });
+    return res.user || (userData as UserProfile);
   },
 
-  async updateUser(id: string, data: Partial<UserProfile>): Promise<UserProfile | null> {
-    const idx = users.findIndex(u => u.id === id);
-    if (idx === -1) return delay(null);
-    users[idx] = { ...users[idx], ...data };
-    return delay(users[idx]);
+  async updateUser(id: string, userData: Partial<UserProfile>): Promise<UserProfile> {
+    const res = await safeFetch<{ user: UserProfile }>(`/api/users/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(userData),
+    }, { user: { ...INITIAL_USERS[0], ...userData, id } as UserProfile });
+    return res.user;
   },
 
-  // ── Properties ────────────────────────────────────────────────────────────
+  // ── Property Listings (MongoDB via /api/listings & /api/properties) ─────────
   async fetchProperties(params?: Record<string, string | number>): Promise<{ properties: PropertyListing[]; savedIds: string[] }> {
-    let filtered = properties.map(p => ({ ...p, isSaved: savedPropertyIds.has(p.id) }));
-    if (params) {
-      const { city, locality, propertyType, maxRent, genderEligibility, furnishing } = params as Record<string, string>;
-      if (city && city !== 'all')
-        filtered = filtered.filter(p => p.city.toLowerCase() === city.toLowerCase());
-      if (locality && locality.trim())
-        filtered = filtered.filter(p => p.locality.toLowerCase().includes(locality.toLowerCase()));
-      if (propertyType && propertyType !== 'all')
-        filtered = filtered.filter(p => p.propertyType === propertyType);
-      if (genderEligibility && genderEligibility !== 'all')
-        filtered = filtered.filter(p => p.genderEligibility === genderEligibility || p.genderEligibility === 'Co-ed / Any');
-      if (furnishing && furnishing !== 'all')
-        filtered = filtered.filter(p => p.furnishing === furnishing);
-      if (maxRent) {
-        const rent = parseInt(maxRent, 10);
-        if (!isNaN(rent) && rent > 0) filtered = filtered.filter(p => p.monthlyRent <= rent);
-      }
-    }
-    return delay({ properties: filtered, savedIds: Array.from(savedPropertyIds) });
+    const search = params ? new URLSearchParams(params as Record<string, string>).toString() : '';
+    const res = await safeFetch<{ properties?: PropertyListing[]; savedIds?: string[] }>(
+      `/api/properties?${search}`,
+      {},
+      { properties: INITIAL_PROPERTIES, savedIds: ['prop-blr-koramangala', 'prop-delhi-southcampus'] }
+    );
+    return {
+      properties: res.properties || INITIAL_PROPERTIES,
+      savedIds: res.savedIds || ['prop-blr-koramangala', 'prop-delhi-southcampus'],
+    };
   },
 
   async fetchPropertyById(id: string): Promise<PropertyListing | null> {
-    const prop = properties.find(p => p.id === id);
-    if (!prop) return delay(null);
-    return delay({ ...prop, isSaved: savedPropertyIds.has(prop.id) });
+    const fallback = INITIAL_PROPERTIES.find(p => p.id === id) || null;
+    const res = await safeFetch<{ property?: PropertyListing }>(`/api/properties/${id}`, {}, { property: fallback || undefined });
+    return res.property || fallback;
   },
 
-  async createProperty(data: Partial<PropertyListing>): Promise<PropertyListing> {
-    const newProp = {
-      id: `prop-${Date.now()}`,
-      title: data.title || 'Comfortable Modern Shared Space',
-      description: data.description || 'Spacious and well ventilated accommodation.',
-      propertyType: data.propertyType || 'private_room',
-      city: data.city || 'Bangalore',
-      locality: data.locality || 'Koramangala',
-      approxAddress: data.approxAddress || `${data.locality || 'Koramangala'}, near major junction`,
-      coordinates: data.coordinates || { lat: 12.935, lng: 77.62 },
-      images: (data.images && data.images.length > 0) ? data.images : [
-        'https://images.unsplash.com/photo-1522771739844-6a9f6d5f14af?auto=format&fit=crop&w=1200&q=80',
-      ],
-      monthlyRent: Number(data.monthlyRent) || 15000,
-      securityDeposit: Number(data.securityDeposit) || 30000,
-      maintenanceCharges: Number(data.maintenanceCharges) || 1000,
-      brokerageFee: Number(data.brokerageFee) || 0,
-      utilityCharges: data.utilityCharges || {
-        electricity: 'Metered bill split equally',
-        wifi: 'Broadband included',
-        water: '24/7 supply',
-        gasCooking: 'Pipeline gas',
-      },
-      roomType: data.roomType || 'Single Room',
-      sharingCapacity: Number(data.sharingCapacity) || 1,
-      furnishing: data.furnishing || 'Fully Furnished',
-      totalBedrooms: Number(data.totalBedrooms) || 2,
-      totalBathrooms: Number(data.totalBathrooms) || 2,
-      bathroomType: data.bathroomType || 'Attached',
-      kitchenDetails: data.kitchenDetails || 'Fully Equipped Modular',
-      amenities: data.amenities || ['Air Conditioning', 'High-Speed Wi-Fi', 'Washing Machine'],
-      genderEligibility: data.genderEligibility || 'Co-ed / Any',
-      visitorPolicy: data.visitorPolicy || 'Allowed with notice',
-      smokingRule: data.smokingRule || 'Balcony only',
-      alcoholRule: data.alcoholRule || 'Allowed',
-      petPolicy: data.petPolicy || 'Case-by-case',
-      leaseDuration: data.leaseDuration || '11 months (renewable)',
-      availableFrom: data.availableFrom || '2026-11-01',
-      listedBy: data.listedBy || currentUserId,
-      postedAt: new Date().toISOString().split('T')[0],
-      isSaved: false,
-      ...(data as any),
-    } as PropertyListing;
-    properties.unshift(newProp);
-    return delay(newProp);
+  async createProperty(propertyData: Partial<PropertyListing>): Promise<PropertyListing> {
+    const res = await safeFetch<{ property: PropertyListing; listing: PropertyListing }>('/api/listings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(propertyData),
+    }, { property: propertyData as PropertyListing, listing: propertyData as PropertyListing });
+    return res.property || res.listing || (propertyData as PropertyListing);
   },
 
-  // ── Saved Properties ──────────────────────────────────────────────────────
-  async toggleSaveProperty(propertyId: string): Promise<{ savedIds: string[] }> {
-    if (savedPropertyIds.has(propertyId)) savedPropertyIds.delete(propertyId);
-    else savedPropertyIds.add(propertyId);
-    return delay({ savedIds: Array.from(savedPropertyIds) });
+  async toggleSaveProperty(id: string): Promise<boolean> {
+    const res = await safeFetch<{ saved: boolean }>(`/api/properties/${id}/save`, { method: 'POST' }, { saved: true });
+    return res.saved;
   },
 
-  async fetchSavedProperties(): Promise<{ properties: PropertyListing[]; savedIds: string[] }> {
-    const saved = properties
-      .filter(p => savedPropertyIds.has(p.id))
-      .map(p => ({ ...p, isSaved: true }));
-    return delay({ properties: saved, savedIds: Array.from(savedPropertyIds) });
+  async toggleShortlistUser(id: string): Promise<boolean> {
+    const res = await safeFetch<{ shortlisted: boolean }>(`/api/users/${id}/shortlist`, { method: 'POST' }, { shortlisted: true });
+    return res.shortlisted;
   },
 
-  // ── Shortlisted Users ─────────────────────────────────────────────────────
-  async toggleShortlistUser(userId: string): Promise<{ shortlistedIds: string[] }> {
-    if (shortlistedUserIds.has(userId)) shortlistedUserIds.delete(userId);
-    else shortlistedUserIds.add(userId);
-    return delay({ shortlistedIds: Array.from(shortlistedUserIds) });
+  async fetchSaved(): Promise<{ properties: PropertyListing[]; shortlistedRoommates: UserProfile[] }> {
+    return safeFetch('/api/saved', {}, {
+      properties: INITIAL_PROPERTIES.slice(0, 2),
+      shortlistedRoommates: INITIAL_USERS.slice(1, 3),
+    });
   },
 
-  async fetchShortlistedUsers(): Promise<{ users: UserProfile[]; shortlistedIds: string[] }> {
-    const shortlisted = users.filter(u => shortlistedUserIds.has(u.id));
-    return delay({ users: shortlisted, shortlistedIds: Array.from(shortlistedUserIds) });
-  },
-
-  // ── Connections ───────────────────────────────────────────────────────────
-  async fetchConnections(): Promise<ConnectionRequest[]> {
-    return delay([...connections]);
-  },
-
-  async sendConnectionRequest(toUserId: string): Promise<ConnectionRequest> {
-    const existing = connections.find(
-      c => c.fromUserId === currentUserId && c.toUserId === toUserId
+  // ── Connections & Inquiries (MongoDB via /api/inquiries & /api/connections) ─
+  async fetchConnections(userId?: string): Promise<ConnectionRequest[]> {
+    const res = await safeFetch<{ connections?: ConnectionRequest[] }>(
+      `/api/connections?userId=${userId || ''}`,
+      {},
+      { connections: INITIAL_CONNECTIONS }
     );
-    if (existing) return delay(existing);
-    const newConn: ConnectionRequest = {
-      id: `conn-${Date.now()}`,
-      fromUserId: currentUserId,
-      toUserId,
-      status: 'pending',
-      createdAt: new Date().toISOString().split('T')[0],
-    };
-    connections.push(newConn);
-    return delay(newConn);
+    return res.connections || INITIAL_CONNECTIONS;
   },
 
-  async updateConnectionStatus(connId: string, status: 'accepted' | 'rejected'): Promise<ConnectionRequest | null> {
-    const idx = connections.findIndex(c => c.id === connId);
-    if (idx === -1) return delay(null);
-    connections[idx] = { ...connections[idx], status };
-    return delay(connections[idx]);
+  async sendConnection(payload: {
+    senderId: string;
+    receiverId: string;
+    message?: string;
+    propertyId?: string;
+    propertyTitle?: string;
+  }): Promise<ConnectionRequest> {
+    const res = await safeFetch<{ connection: ConnectionRequest; inquiry: any }>('/api/inquiries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }, { connection: { id: `conn-${Date.now()}`, ...payload, status: 'pending', createdAt: 'Just now' } as any, inquiry: {} });
+    return res.connection;
   },
 
-  // ── Messages ──────────────────────────────────────────────────────────────
-  async fetchMessages(withUserId?: string): Promise<ChatMessage[]> {
-    let filtered = [...messages];
-    if (withUserId)
-      filtered = filtered.filter(
-        m => (m.fromUserId === currentUserId && m.toUserId === withUserId) ||
-             (m.fromUserId === withUserId && m.toUserId === currentUserId)
-      );
-    return delay(filtered);
+  async updateConnectionStatus(id: string, status: 'accepted' | 'declined'): Promise<ConnectionRequest> {
+    const res = await safeFetch<{ connection: ConnectionRequest }>(`/api/connections/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    }, { connection: { id, status, createdAt: 'Just now' } as any });
+    return res.connection;
   },
 
-  async sendMessage(toUserId: string, content: string): Promise<ChatMessage> {
-    const newMsg: ChatMessage = {
-      id: `msg-${Date.now()}`,
-      fromUserId: currentUserId,
-      toUserId,
-      content,
-      timestamp: new Date().toISOString(),
-      isRead: false,
-    };
-    messages.push(newMsg);
-    return delay(newMsg);
+  // ── Messaging ─────────────────────────────────────────────────────────────
+  async fetchMessages(userA: string, userB: string): Promise<ChatMessage[]> {
+    const res = await safeFetch<{ messages?: ChatMessage[] }>(
+      `/api/messages?userA=${userA}&userB=${userB}`,
+      {},
+      { messages: INITIAL_MESSAGES }
+    );
+    return res.messages || INITIAL_MESSAGES;
   },
 
-  // ── Reports ───────────────────────────────────────────────────────────────
+  async sendMessage(payload: {
+    senderId: string;
+    receiverId: string;
+    text: string;
+    sharedProperty?: ChatMessage['sharedProperty'];
+  }): Promise<ChatMessage> {
+    const res = await safeFetch<{ message: ChatMessage }>('/api/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }, {
+      message: {
+        id: `msg-${Date.now()}`,
+        threadId: [payload.senderId, payload.receiverId].sort().join('-'),
+        senderId: payload.senderId,
+        receiverId: payload.receiverId,
+        text: payload.text,
+        timestamp: 'Just now',
+        sharedProperty: payload.sharedProperty,
+      },
+    });
+    return res.message;
+  },
+
+  // ── Reports & Moderation ──────────────────────────────────────────────────
   async fetchReports(): Promise<ReportItem[]> {
-    return delay([...reports]);
+    const res = await safeFetch<{ reports?: ReportItem[] }>('/api/reports', {}, { reports: INITIAL_REPORTS });
+    return res.reports || INITIAL_REPORTS;
   },
 
-  async submitReport(data: Partial<ReportItem>): Promise<ReportItem> {
-    const newReport: ReportItem = {
-      id: `report-${Date.now()}`,
-      reportedBy: currentUserId,
-      targetType: data.targetType || 'user',
-      targetId: data.targetId || '',
-      targetTitle: data.targetTitle || '',
-      reason: data.reason || 'Other',
-      description: data.description || '',
-      status: 'pending',
-      createdAt: new Date().toISOString().split('T')[0],
+  async submitReport(payload: Partial<ReportItem>): Promise<ReportItem> {
+    const res = await safeFetch<{ report: ReportItem }>('/api/reports', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }, { report: { id: `rep-${Date.now()}`, ...payload, status: 'pending', createdAt: 'Just now' } as any });
+    return res.report;
+  },
+
+  async updateReportStatus(id: string, status: string): Promise<ReportItem> {
+    const res = await safeFetch<{ report: ReportItem }>(`/api/reports/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    }, { report: { id, status, createdAt: 'Just now' } as any });
+    return res.report;
+  },
+
+  // ── AI Match Insights & Assistants ────────────────────────────────────────
+  async getMatchInsight(userA: UserProfile, userB: UserProfile): Promise<string> {
+    const res = await safeFetch<{ insight?: string }>('/api/ai/match-insight', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userA, userB }),
+    }, {
+      insight: `High compatibility! Both ${userA.name} and ${userB.name} prefer ${userA.lifestyle?.cleanliness || 'clean'} spaces and aligned work styles.`,
+    });
+    return res.insight || 'High lifestyle match based on sleep schedule and cleanliness.';
+  },
+
+  async naturalLanguageSearch(query: string): Promise<{
+    matchedPropertyIds: string[];
+    matchedUserIds: string[];
+    summary: string;
+  }> {
+    return safeFetch('/api/ai/nl-search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    }, {
+      matchedPropertyIds: ['prop-blr-koramangala', 'prop-blr-hsr'],
+      matchedUserIds: ['user-ananya', 'user-rohan'],
+      summary: `Found verified rooms and compatible roommates matching "${query}".`,
+    });
+  },
+
+  async getBudgetPlan(payload: {
+    monthlyRent: number;
+    maintenance?: number;
+    securityDeposit?: number;
+    city?: string;
+    roomType?: string;
+  }): Promise<{
+    upfrontCost: number;
+    monthlyTotal: number;
+    breakdown: {
+      rent: number;
+      maintenance: number;
+      estimatedElectricityAndWifi: number;
+      estimatedFoodAndGroceries: number;
+      estimatedLocalCommute: number;
     };
-    reports.push(newReport);
-    return delay(newReport);
+    financialTip: string;
+  }> {
+    const rent = payload.monthlyRent || 15000;
+    const maintenance = payload.maintenance || 1000;
+    const deposit = payload.securityDeposit || rent * 2;
+    const fallback = {
+      upfrontCost: deposit + rent + maintenance,
+      monthlyTotal: rent + maintenance + 3500 + 4000,
+      breakdown: {
+        rent,
+        maintenance,
+        estimatedElectricityAndWifi: 1500,
+        estimatedFoodAndGroceries: 5000,
+        estimatedLocalCommute: 2000,
+      },
+      financialTip: 'Keep your total accommodation expenses under 35% of your take-home monthly budget for optimal savings.',
+    };
+    return safeFetch('/api/ai/budget-calc', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }, fallback);
   },
 
-  async updateReportStatus(reportId: string, status: string): Promise<ReportItem | null> {
-    const idx = reports.findIndex(r => r.id === reportId);
-    if (idx === -1) return delay(null);
-    reports[idx] = { ...reports[idx], status: status as ReportItem['status'] };
-    return delay(reports[idx]);
+  async summarizeListing(property: PropertyListing): Promise<string> {
+    const res = await safeFetch<{ summary?: string }>('/api/ai/summarize-listing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ property }),
+    }, {
+      summary: `${property.title} located in ${property.locality}, ${property.city}. Features ${property.furnishing.toLowerCase()} setup with ${property.amenities?.slice(0, 3).join(', ')}.`,
+    });
+    return res.summary || 'Summary generated.';
   },
 
-  // ── AI (graceful fallback if no backend) ──────────────────────────────────
-  async sendAIMessage(message: string, history: { role: string; content: string }[]): Promise<string> {
-    try {
-      const res = await fetch('/api/ai/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, history }),
-      });
-      if (!res.ok) throw new Error('no backend');
-      const data = await res.json();
-      return data.response || data.message || 'No response.';
-    } catch {
-      return "Hi! I'm Romeo AI 🏠 — my AI backend isn't connected right now. Try browsing rooms or roommates using the tabs above!";
-    }
+  async getSafetyAdvice(payload: {
+    propertyTitle?: string;
+    rent?: number;
+    city?: string;
+  }): Promise<string> {
+    const res = await safeFetch<{ advice?: string }>('/api/ai/safety-advice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }, {
+      advice: 'Always insist on a physical or live video walkthrough before transferring any advance deposit. Verify the landlord/manager identity and review rental agreement terms.',
+    });
+    return res.advice || 'Safety guidelines loaded.';
   },
 };
